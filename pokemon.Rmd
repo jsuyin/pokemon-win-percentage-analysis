@@ -1,0 +1,644 @@
+---
+title: "Homework 4 Math 6359"
+author: "Justin Mundell"
+date: "2024-04-10"
+output:
+  word_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Data Exploration
+
+We will start reading the data. We will do some column names adjustments
+to have a better readability.
+
+We will explore the dimensions of each data frame we will be working
+with. Also, we will look into Type 1 unique values as we are interested
+in comparing the performance of the Pokemon based on what type they
+are.
+
+Finally, we will make sure there are no missing values.
+
+```{r}
+pokemon = read.csv("C:/Users/Handt/OneDrive/Documents/Math 6359/Project/pokemon.csv")
+names(pokemon)[names(pokemon) == 'X.'] <- 'Number'
+```
+
+```{r}
+combats = read.csv("C:/Users/Handt/OneDrive/Documents/Math 6359/Project/combats.csv")
+```
+
+```{r}
+head(pokemon)
+dim(pokemon) #there are 800 Pokemon
+```
+
+```{r}
+head(combats)
+dim(combats) #there are approximately 50,000 battles between Pokemon
+```
+
+```{r}
+unique(pokemon$Type.1) ; length(unique(pokemon$Type.1)) #number of types
+```
+
+```{r}
+colSums(is.na(pokemon)) #there are no missing values
+```
+
+# Data Preparation
+
+#### Win Percentage Calculation We will first calculate the win percentage of 
+#### each Pokemon and create a column showing this.
+
+```{r}
+first_count = table(combats$First_pokemon)
+second_count = table(combats$Second_pokemon)
+
+total_battles = first_count + second_count #total battles per Pokemon
+
+total_wins = table(combats$Winner) # total wins per Pokemon
+```
+
+```{r}
+length(as.vector(total_wins))
+length(as.vector(total_battles))
+
+total_battles = as.data.frame(total_battles)
+total_wins = as.data.frame(total_wins)
+```
+
+The number of dimensions are different in total wins and total battles.
+This indicates that there is one Pokemon that did not win any of its
+battles. We must find this Pokemon and add it to total wins to correct
+the dimensions.
+
+```{r}
+setdiff(total_battles$Var1, total_wins$Var1)
+print(pokemon[231,])
+```
+
+The Pokemon that did not win any battles is Shuckle.
+
+```{r}
+shuckle <- data.frame(Var1 = 231, Freq = 0)
+total_wins <- rbind(shuckle, total_wins)
+
+colnames(total_battles) = c("Number", "Battles")
+colnames(total_wins) = c("Number", "Wins")
+```
+
+```{r}
+#Calculating win percentage
+df = merge(total_battles,total_wins, by = "Number")
+df$`Win Percentage` = df$Wins/df$Battles
+```
+
+```{r}
+pokemon <- merge(pokemon, df, by = "Number")
+```
+
+#### Top Pokemon of each Type (18 best based on Type1) This shows the Pokemon 
+#### that has the highest winning percentage for each Pokemon type.
+```{r}
+library(dplyr)
+best_pokemon_type1 <- pokemon %>%
+  arrange(desc(`Win Percentage`)) %>%
+  group_by(Type.1) %>%
+  slice(1)
+best_pokemon_type1 
+```
+
+# Analysis
+
+## Pokemon comparisons on having Type 1 only (18 unique types).
+
+Is there a statistically significant difference in the mean win
+percentage among Pokemon that only have one type?
+
+There are 18 total types.
+
+```{r}
+two_types = pokemon[Reduce(`&`, 
+                           lapply(pokemon, function(x) !(is.na(x)|x==""))),]
+
+one_type = pokemon[!Reduce(`&`, 
+                           lapply(pokemon, function(x) !(is.na(x)|x==""))),]
+
+two_types = two_types[, c("Number", "Name", "Type.1", "Type.2", 
+                         "Win Percentage")]
+
+one_type = one_type[, c("Number", "Name", "Type.1",  "Win Percentage")]
+```
+
+#### Check Assumptions
+
+```{r}
+library(car)
+library(biotools)
+
+# Normality
+for(type in unique(one_type$Type.1)) {
+  subset <- one_type[one_type$Type.1 == type,]
+  
+  # Check if the sample size is within the valid range for Shapiro-Wilk test
+  if(nrow(subset) >= 3 & nrow(subset) <= 5000) {
+    shapiro_test <- shapiro.test(subset$`Win Percentage`)
+    print(paste("Type:", type, "p-value:", shapiro_test$p.value))
+  } else {
+    print(paste("Type:", type, "invalid sample size for Shapiro-Wilk test"))
+  }
+}
+
+# Homogeneity of variances
+levene_test <- leveneTest(`Win Percentage` ~ Type.1, data = one_type)
+print(levene_test)
+
+```
+
+From our results, it appears that the win percentages for the types Bug,
+Normal, Electric, Psychic, and Grass have p-values less than 0.05,
+suggesting that they do not follow a normal distribution.
+
+The type Flying has an invalid sample size for the test since there are a total
+of 2 flying Pokemon. There needs to be at least 3 per group for the test to
+work.
+
+```{r}
+sum(one_type$Type.1 == "Flying") # number of Pokemon that fly
+```
+From our results, the p-value is 0.001667, which is less than 0.05. This
+suggests that we reject the null hypothesis and conclude that the
+variances are not equal across the different Pokemon types.
+
+#### Testing if there is a significant statistical difference in win percentage
+
+Our first idea was to use ANOVA but because our data does no meet the
+assumptions of normality and homogeneity of variances we will look into
+a non-parametric version of the test, such as Kruskal-Wallis.
+
+#### ANOVA
+
+```{r}
+#ANOVA function for pokemon with one type
+attach(one_type)
+
+one_type$Type.1 <- as.factor(one_type$Type.1)
+one.lm = lm(`Win Percentage`~ Type.1, data = one_type)
+anova(one.lm)
+```
+
+There's evidence that at least one of the mean win percentages among the
+types of Pokemon are not equal.
+
+```{r}
+#Pairs t-test
+pairwise.t.test(`Win Percentage`, Type.1, "bon")
+```
+
+According to the pairwise T test, there's a statistical significance
+difference between the bug type versus dark type, bug versus electric
+type, bug versus fire type, and fairy versus electric type. This is
+telling us that the bug type is the one that's mostly significantly
+different from all of the other ones.
+
+This indicates that the bug type Pokemon loses a lot of battles.
+
+```{r}
+library(tidyverse)
+qplot(data = one_type, x = Type.1, y = `Win Percentage`, geom = "boxplot")
+```
+
+This box plot provides further reasoning to why the bug type Pokemon has
+a very low win percentage out of all Pokemon types. It's important to note that 
+the mean win percentage of the flying type Pokemon is extremely high since there
+are only 2 observations of that type. Thus, it's an outlier.
+
+#### Kruskal-Wallis
+
+```{r}
+kruskal_test <- kruskal.test(`Win Percentage` ~ Type.1, data = one_type)
+print(kruskal_test)
+```
+
+The p-value we obtained is less than 0.05, which suggests that we can
+reject the null hypothesis and conclude that there is a statistically
+significant difference in the Win Percentage across the different
+Pokemon types.
+
+However, the Kruskal-Wallis test does not tell us which specific groups
+(in this case, Pokemon types) were significantly different from each
+other. To find out, we can perform the Dunn test.
+
+```{r}
+library(dunn.test)
+dunn_result <- dunn.test(one_type$`Win Percentage`, one_type$Type.1, 
+                         method = "bonferroni")
+```
+
+The results from the Dunns test indicate that there are statistically
+significant differences in win percentages between Bug type and Dark,
+Electric, and Fire type.
+
+```{r}
+# Calculate median win percentage for Bug type
+bug_median <- median(one_type$`Win Percentage`[one_type$Type.1 == "Bug"])
+
+# Calculate median win percentage for Dark type
+dark_median <- median(one_type$`Win Percentage`[one_type$Type.1 == "Dark"])
+
+# Calculate median win percentage for Electric type
+electric_median <- median(one_type$`Win Percentage`[one_type$Type.1 == "Electric"])
+
+# Calculate median win percentage for Fire type
+fire_median <- median(one_type$`Win Percentage`[one_type$Type.1 == "Fire"])
+
+# Print the results
+print(paste("Median win percentage for Bug type:", bug_median))
+print(paste("Median win percentage for Dark type:", dark_median))
+print(paste("Median win percentage for Electric type:", electric_median))
+print(paste("Median win percentage for Fire type:", fire_median))
+
+```
+
+Based on the median win percentages we have calculated, it appears that
+Bug types have a lower median win percentage (0.146) compared to Dark
+(0.665), Electric (0.604), and Fire (0.536) types. This suggests that,
+on average, Bug type Pokemon tend to win less often when battling
+against these types.
+
+#### Analysis on our findings
+
+Initially, we planned to use an ANOVA test to determine if there was a
+statistically significant difference in the win percentages across the
+different Pokemon types. However, upon checking the assumptions for the
+ANOVA test, we found that they were not met. Specifically, the
+assumption of normality was violated for several Pokemon types, and the
+assumption of homogeneity of variances was also not met.
+
+As a result, we turned to the non-parametric Kruskal-Wallis test, which
+does not require these assumptions. The results from the Kruskal-Wallis
+test were consistent with what we would have expected from the ANOVA
+test, had its assumptions been met. We found that there is a
+statistically significant difference in the win percentages across the
+different Pokemon types.
+
+Further analysis using Dunn’s post-hoc test revealed that the Bug type
+Pokemon showed statistically significant differences in win percentages
+when compared to other types. This suggests that the performance of Bug
+type Pokemon in battles is significantly different from that of several
+other types.
+
+It’s important to note that while the assumptions for the ANOVA test
+were not met, leading us to use the Kruskal-Wallis test instead, both
+tests led us to the same conclusion about the overall differences in win
+percentages across Pokemon types. This demonstrates the robustness of
+our findings.
+
+## Pokemon comparisons on having 1 Type versus 2 Types
+
+```{r}
+library(ICSNP)
+
+# Convert vectors to one-column matrices
+one_type_matrix <- matrix(one_type$`Win Percentage`, ncol = 1)
+two_types_matrix <- matrix(two_types$`Win Percentage`, ncol = 1)
+
+# Perform HotellingsT2 test
+HotellingsT2(one_type_matrix, two_types_matrix)
+
+```
+```{r}
+# Perform Mann-Whitney U test
+mw_test = wilcox.test(one_type$`Win Percentage`, two_types$`Win Percentage`)
+mw_test
+```
+
+The results from both the Hotellings T2 test and the Mann-Whitney U test 
+indicate that there is a statistically significant difference in the Win 
+Percentage between Pokemon with one type and those with two types.
+
+The test statistic for Hotellings T2 is 14.005, and the p-value is 0.0001956. 
+Since the p-value is less than 0.05, we can reject the null hypothesis and 
+conclude there is a statistically significant difference in the Win Percentage 
+between Pokemon with one type and those with two types.
+
+The test statistic for Mann-Whitney is 64853, and the p-value is 0.0001771. 
+Again, since the p-value is less than 0.05, we can reject the null hypothesis 
+and conclude that there is a statistically significant difference in the Win 
+Percentage between Pokemon with one type and those with two types.
+
+In conclusion, both tests suggest that the number of types a Pokemon has 
+(one type vs. two types) significantly affects its win percentage. However, 
+these tests do not tell us which group (one type or two types) tends to have a
+higher win percentage. For that, we could look at the median or mean win 
+percentages of the two groups.
+
+*Look at median or mean win percentages of the two groups*
+
+#### This is for pokemon of just one type
+```{r}
+#The medians of Pokemon with just one type (by type)
+unique_groups <- unique(one_type$Type.1)
+
+for (group_name in unique_groups) {
+  group_median <- median(one_type$`Win Percentage`[one_type$Type.1 == group_name], na.rm = TRUE)
+  cat("Type:", group_name, "- Median Value:", group_median, "\n")
+}
+
+```
+```{r}
+medians <- numeric(length(unique_groups))
+
+# calculating the medians of each single type
+for (i in seq_along(unique_groups)) {
+  group_name <- unique_groups[i]
+  group_median <- median(one_type$`Win Percentage`
+                         [one_type$Type.1 == group_name], na.rm = TRUE)
+  medians[i] <- group_median
+}
+
+# Plot histogram
+hist(medians, main = "Histogram of Median Win Percentages by Type", 
+     xlab = "Median Win Percentage", col = "red")
+```
+
+After calculating the median win percentage for Pokemon of one type and viewing
+the histogram, it's difficult to identify a central tendency. The distribution 
+is skewed to the right, showing greater variability. This means that there are 
+possible outliers. From the output of the medians, the flying type has a median
+win percentage of 90.74%. Earlier, we found that there are only two Pokemon in 
+the data set that are just the flying type. This explains why the distribution
+is extremely skewed.
+
+Furthermore, 9 out of 18 of the types fall within the 30-40% median win 
+percentage range. Ice, steel, rock, dragon, grass, fighting, fairy, ground, and
+poison types fall within this range. Excluding the flying type, dark, psychic, 
+electric, normal, and fire all have a median win percentage above 50%. This goes
+to show which Pokemon types win more often than others.
+
+
+```{r}
+one_type_counts <- table(one_type$Type.1)
+one_type_counts
+```
+For further investigation, the Pokemon types that make up most of the population 
+are normal, psychic, fire, water, electric, and fighting. Besides the dark type,
+these types all have a median win percentage above 50%. Having a higher sample
+size for each Pokemon type could explain the robustness of the median win 
+percentage, but it may not mean that the win percentage would be higher. Pokemon
+types vary in their strengths and weaknesses, which influences their likelihood
+of winning in battles. Some types may naturally  have higher win percentages due
+to their effectiveness against other types, regardless of sample size.
+
+```{r}
+# removing Flying-type Pokémon
+one_type_no_flying <- one_type[one_type$Type.1 != "Flying", ]
+
+overall_one_median <- median(one_type_no_flying$`Win Percentage`, 
+                             na.rm = TRUE)
+print(overall_one_median)
+```
+
+```{r}
+unique_types <- unique(one_type_no_flying$Type.1)
+type_medians <- numeric(length(unique_types))
+
+for (i in seq_along(unique_types)) {
+  type <- unique_types[i]
+  type_medians[i] <- median(one_type_no_flying$`Win Percentage`
+                            [one_type_no_flying$Type.1 == type], na.rm = TRUE)
+}
+
+# plotting the distribution of median win percentages
+hist(type_medians,
+     main = "Median Win Percentages (Excluding Flying Type)",
+     xlab = "Median Win Percentage",
+     col = "skyblue",
+     border = "black")
+```
+
+When excluding the two flying type observations and recreating the histogram,
+the distribution appears to be less skewed. The distribution is still not 
+normal, but for the purpose of comparison, we decided to find the central 
+tendency. The overall median of the median win percentages for each type is 
+43.38%. 
+
+
+
+#### This is for pokemon of two types
+
+
+
+
+```{r}
+result <- aggregate(two_types$`Win Percentage`~ two_types$Type.1 + 
+                      two_types$Type.2, data = two_types, FUN = median, 
+                    na.rm = TRUE)
+head(result) #first 10 
+```
+```{r}
+dim(result)
+```
+
+```{r}
+hist(result$`two_types$\`Win Percentage\``, breaks = 10, col = "lightblue",
+     main = "Distribution of Median Win Percentage for Two Types",
+     xlab = "Median", ylab = "Frequency")
+```
+
+There are 136 total unique combinations for Pokemon that have two
+types. This means that the number of observations per combination may vary. 
+However, there seems to be a normal distribution of the median win percentage 
+for Pokemon of two types. 
+
+Since the distribution of the medians are normal, it's appropriate to calculate
+the central tendency of the medians.
+
+```{r}
+median_win_percentages <- result$`two_types$\`Win Percentage\``
+
+overall_median <- median(median_win_percentages, na.rm = TRUE)
+
+# Print the result
+print(overall_median)
+```
+
+The overall median win percentage of Pokemon with two types is 55.36%. This 
+shows that the average performance of Pokemon across various types. Thus, since 
+the median is over 50%, it suggests that on average, Pokemon with type 
+combinations are relatively balanced and perform well. This is much higher than
+the overall median win percentage for Pokemon that have just one type, which was
+43.38%. 
+
+From the Hotellings T2 test and the Mann-Whitney U test, we found that there's
+a statistically significant difference between the Pokemon of one type and 
+Pokemon of two types. Finding the overall median win percentage for the both
+of them has shown that there is a difference in their overall performances,
+which supports the findings from these tests.
+
+## Pokemon comparisons on different generations
+
+#### Check Assumptions
+
+```{r}
+pokemon$Generation <- as.factor(pokemon$Generation)
+
+# Normality
+for(generation in unique(pokemon$Generation)) {
+  subset <- pokemon[pokemon$Generation == generation,]
+  
+  # Check if the sample size is within the valid range for Shapiro-Wilk test
+  if(nrow(subset) >= 3 & nrow(subset) <= 5000) {
+    shapiro_test <- shapiro.test(subset$`Win Percentage`)
+    print(paste("Generation:", generation, "p-value:", shapiro_test$p.value))
+  } else {
+    print(paste("Generation:", generation, "has an invalid sample size for Shapiro-Wilk test"))
+  }
+}
+
+# Homogeneity of variances
+levene_test <- leveneTest(`Win Percentage` ~ Generation, data = pokemon)
+print(levene_test)
+
+```
+
+For some background information the generation is which season the pokemon came 
+out. (this should go in introduction***)
+
+From our results, it appears that the win percentages for all Pokemon 
+generations except Generation 6 have p-values less than 0.05, suggesting 
+that they do not follow a normal distribution. For Generation 6, the p-value is 
+slightly greater than 0.05. Thus, we reject the null hypothesis and conclude 
+that the generations do not follow a normal distribution.
+
+From our results, the p-value is 0.7527, which is greater than 0.05. We fail to
+reject the null hypothesis and conclude that the variances are equal across the 
+different Pokemon generations.
+
+#### Testing if there is a significant statistical difference in win percentage
+
+As we have found from our previous tests, the win percentages for all Pokemon 
+generations except Generation 6 do not follow a normal distribution, which 
+violates one of the key assumptions of ANOVA. However, the variances across the
+different Pokemon generations are equal, which meets the homogeneity of 
+variances assumption of ANOVA.
+
+Given these findings, the Kruskal-Wallis test, which does not require the 
+assumption of normality, would be a more appropriate choice in this case.
+
+#### Kruskal-Wallis
+
+```{r}
+kruskal_test <- kruskal.test(`Win Percentage` ~ Generation, data = pokemon)
+print(kruskal_test)
+```
+
+The p-value is 0.08518, which is greater than the commonly used significance 
+level of 0.05. This means that we fail to reject the null hypothesis. 
+Our results do not provide strong evidence to conclude that there are 
+statistically significant differences in the Win Percentage across the different 
+Pokemon generations. 
+
+```{r}
+ggplot(pokemon, aes(x = Generation, y = `Win Percentage`)) +
+  geom_boxplot(fill = "yellow", color = "black") +
+  labs(title = "Win Percentage by Generation",
+       x = "Generation",
+       y = "Win Percentage")
+```
+
+
+```{r}
+generation_medians <- aggregate(`Win Percentage` ~ Generation, data = pokemon, 
+                                FUN = median)
+print(generation_medians) # median win percentage for each distribution
+```
+
+This can also been seen in the box plot that shows the median win percentage for
+each generation. The win percentages for each generation are 0.52, 0.43, 0.43,
+0.59, 0.48, and 0.46 respective to their generations. Although the fourth 
+generation has the highest win percentage, there isn't a large enough difference 
+in these values to suggest there's a significant difference. 
+
+Lastly, these results suggests that the generation a Pokemon is from doesn't 
+necessarily impact their likelihood of winning or losing a battle.
+
+
+## Pokemon comparisons on being legendary
+
+#### Check Assumptions
+
+```{r}
+pokemon$Legendary <- as.factor(pokemon$Legendary)
+
+# Normality
+legendary_pokemons <- pokemon[pokemon$Legendary == "True",]
+non_legendary_pokemons <- pokemon[pokemon$Legendary == "False",]
+
+shapiro_test_leg <- shapiro.test(legendary_pokemons$`Win Percentage`)
+shapiro_test_non_leg <- shapiro.test(non_legendary_pokemons$`Win Percentage`)
+
+print(paste("Legendary Pokemons p-value:", shapiro_test_leg$p.value))
+print(paste("Non-Legendary Pokemons p-value:", shapiro_test_non_leg$p.value))
+
+# Homogeneity of variances
+levene_test <- leveneTest(`Win Percentage` ~ Legendary, data = pokemon)
+print(levene_test)
+
+```
+
+From our Shapiro Test results, it appears the win percentages for both Legendary 
+and Non-Legendary Pokemon have p-values less than 0.05, suggesting that they do 
+not follow a normal distribution.
+
+After testing the homogeneity of the variances, we found that the p-value is 
+significantly less than 0.05. We reject the null hypothesis. This suggests the 
+variances are not equal between Legendary and Non-Legendary Pokemon.
+
+Given these findings, the assumptions for an ANOVA test are not met. 
+Therefore, a non-parametric test like the Mann-Whitney U test would be more 
+appropriate for comparing the Win Percentage between Legendary and 
+Non-Legendary Pokemon.
+
+#### Mann-Whitney
+
+```{r}
+# Perform Mann-Whitney U test
+wilcox.test(legendary_pokemons$`Win Percentage`, non_legendary_pokemons$`Win Percentage`)
+
+```
+
+The p-value is less than 2.2e-16, which is essentially zero and much smaller 
+than the significance level of 0.05. We reject the null hypothesis and conclude
+there is very strong evidence of a statistically significant difference in the 
+Win Percentage between Legendary and Non-Legendary Pokemon.
+
+If we look at the Legendary and Non-Legendary Pokemon win percentage:
+
+```{r}
+print(paste("Legendary Pokemons Win Percentage median:", 
+            median(legendary_pokemons$`Win Percentage`)))
+
+print(paste("Non-Legendary Pokemons Win Percentage median:", 
+            median(non_legendary_pokemons$`Win Percentage`)))
+```
+
+We can observe that Legendary Pokemon have a median win percentage of 
+approximately 0.821, while Non-Legendary Pokemon have a median win percentage of
+about 0.456. This suggests that Legendary Pokemon win battles almost twice as 
+often as Non-Legendary Pokemon. This could be due to the typically superior 
+stats and abilities of Legendary Pokemon.
+
+```{r}
+ggplot(pokemon, aes(x = Legendary, y = `Win Percentage`, fill = Legendary)) +
+  geom_boxplot() +
+  labs(title = "Median Win % for Legendary and Non-Legendary Pokémon",
+       x = "Legendary Status",
+       y = "Win Percentage",
+       fill = "Legendary") +
+  theme_minimal() 
+```
